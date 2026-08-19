@@ -389,6 +389,7 @@ impl CodeBlock {
                         self.state.clone(),
                         vec![],
                         self.styles.clone(),
+                        vec![],
                     ))
                     .when_some(node_cx.code_block_actions.clone(), |this, actions| {
                         this.child(
@@ -581,6 +582,9 @@ impl Paragraph {
         let mut text = String::new();
         let mut highlights: Vec<(Range<usize>, HighlightStyle)> = vec![];
         let mut links: Vec<(Range<usize>, LinkMark)> = vec![];
+        // Inline code renders in the mono font; a font family cannot ride
+        // along in a `HighlightStyle`, so these ranges travel on their own.
+        let mut fonts: Vec<(Range<usize>, SharedString)> = vec![];
         let mut offset = 0;
 
         let mut ix = 0;
@@ -601,6 +605,7 @@ impl Paragraph {
                             inline_node.state.clone(),
                             links.clone(),
                             highlights.clone(),
+                            fonts.clone(),
                         )
                         .into_any_element(),
                     );
@@ -628,6 +633,7 @@ impl Paragraph {
                 text.clear();
                 links.clear();
                 highlights.clear();
+                fonts.clear();
                 offset = 0;
             } else {
                 let mut node_highlights = vec![];
@@ -649,6 +655,7 @@ impl Paragraph {
                     }
                     if style.code {
                         highlight.background_color = Some(cx.theme().accent);
+                        fonts.push((inner_range.clone(), node_cx.style.inline_code_font(cx)));
                     }
 
                     if let Some(mut link_mark) = style.link.clone() {
@@ -680,8 +687,9 @@ impl Paragraph {
         // Add the last text node
         if text.len() > 0 {
             self.state.lock().unwrap().set_text(text.into());
-            child_nodes
-                .push(Inline::new(ix, self.state.clone(), links, highlights).into_any_element());
+            child_nodes.push(
+                Inline::new(ix, self.state.clone(), links, highlights, fonts).into_any_element(),
+            );
         }
 
         div().id(span.unwrap_or_default()).children(child_nodes)

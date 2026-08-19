@@ -8,7 +8,7 @@ use gpui::{
     point, px, quad, App, BorderStyle, Bounds, CursorStyle, Edges, Element, ElementId,
     GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
     LayoutId, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StyledText, TextLayout,
-    Window,
+    TextRun, TextStyle, Window,
 };
 
 use crate::{global_state::GlobalState, input::Selection, text::node::LinkMark, ActiveTheme};
@@ -21,6 +21,9 @@ pub(super) struct Inline {
     text: SharedString,
     links: Rc<Vec<(Range<usize>, LinkMark)>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
+    /// Ranges that render in a different font family than the surrounding
+    /// text, used by inline code spans. Sorted and non-overlapping.
+    fonts: Vec<(Range<usize>, SharedString)>,
     styled_text: StyledText,
 
     state: Arc<Mutex<InlineState>>,
@@ -48,16 +51,69 @@ impl Inline {
         state: Arc<Mutex<InlineState>>,
         links: Vec<(Range<usize>, LinkMark)>,
         highlights: Vec<(Range<usize>, HighlightStyle)>,
+        fonts: Vec<(Range<usize>, SharedString)>,
     ) -> Self {
         let text = state.lock().unwrap().text.clone();
         Self {
             id: id.into(),
             links: Rc::new(links),
             highlights,
+            fonts,
             text: text.clone(),
             styled_text: StyledText::new(text),
             state,
         }
+    }
+
+    /// The text runs to render, one per stretch of text that shares a
+    /// highlight and a font family.
+    ///
+    /// [`HighlightStyle`] cannot carry a font family, so the runs are built
+    /// here rather than left to `StyledText::with_highlights`: that is what
+    /// lets an inline code span use the mono font without breaking the
+    /// paragraph into separate elements.
+    fn runs(&self, text_style: &TextStyle) -> Vec<TextRun> {
+        let len = self.text.len();
+
+        let mut boundaries: Vec<usize> =
+            Vec::with_capacity(2 + 2 * (self.highlights.len() + self.fonts.len()));
+        boundaries.push(0);
+        boundaries.push(len);
+        for (range, _) in self.highlights.iter() {
+            boundaries.push(range.start.min(len));
+            boundaries.push(range.end.min(len));
+        }
+        for (range, _) in self.fonts.iter() {
+            boundaries.push(range.start.min(len));
+            boundaries.push(range.end.min(len));
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
+
+        let mut runs = Vec::with_capacity(boundaries.len());
+        for pair in boundaries.windows(2) {
+            let (start, end) = (pair[0], pair[1]);
+
+            let mut style = text_style.clone();
+            if let Some((_, highlight)) = self
+                .highlights
+                .iter()
+                .find(|(range, _)| range.contains(&start))
+            {
+                style = style.highlight(*highlight);
+            }
+
+            let mut run = style.to_run(end - start);
+            if let Some((_, font_family)) =
+                self.fonts.iter().find(|(range, _)| range.contains(&start))
+            {
+                run.font.family = font_family.clone();
+            }
+
+            runs.push(run);
+        }
+
+        runs
     }
 
     /// Get link at given mouse position.
@@ -245,19 +301,7 @@ impl Element for Inline {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let text_style = window.text_style();
-
-        let mut runs = Vec::new();
-        let mut ix = 0;
-        for (range, highlight) in self.highlights.iter() {
-            if ix < range.start {
-                runs.push(text_style.clone().to_run(range.start - ix));
-            }
-            runs.push(text_style.clone().highlight(*highlight).to_run(range.len()));
-            ix = range.end;
-        }
-        if ix < self.text.len() {
-            runs.push(text_style.to_run(self.text.len() - ix));
-        }
+        let runs = self.runs(&text_style);
 
         self.styled_text = StyledText::new(self.text.clone()).with_runs(runs);
         let (layout_id, _) =
@@ -401,8 +445,46 @@ fn point_in_text_selection(
 
 #[cfg(test)]
 mod tests {
-    use super::point_in_text_selection;
-    use gpui::{point, px, size, Bounds};
+    use super::{point_in_text_selection, Inline, InlineState};
+    use gpui::{hsla, point, px, size, Bounds, HighlightStyle, SharedString, TextStyle};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn test_runs_split_by_highlight_and_font() {
+        // "hi `code`!", as the parser hands it over: the backticks are gone,
+        // and the code span is both highlighted and in another font.
+        let text = "hi code!";
+        let state = Arc::new(Mutex::new(InlineState::default()));
+        state.lock().unwrap().set_text(text.into());
+
+        let background_color = Some(hsla(0., 0., 0.5, 1.));
+        let inline = Inline::new(
+            "test",
+            state,
+            vec![],
+            vec![(
+                3..7,
+                HighlightStyle {
+                    background_color,
+                    ..Default::default()
+                },
+            )],
+            vec![(3..7, SharedString::from("Menlo"))],
+        );
+
+        let text_style = TextStyle::default();
+        let runs = inline.runs(&text_style);
+
+        assert_eq!(
+            runs.iter().map(|run| run.len).collect::<Vec<_>>(),
+            vec![3, 4, 1]
+        );
+        assert_eq!(runs[1].font.family, SharedString::from("Menlo"));
+        assert_eq!(runs[1].background_color, background_color);
+        assert_eq!(runs[0].font.family, text_style.font_family);
+        assert_eq!(runs[0].background_color, None);
+        assert_eq!(runs[2].font.family, text_style.font_family);
+    }
 
     #[test]
     fn test_point_in_text_selection() {

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use gpui::{Pixels, Rems, StyleRefinement, px, rems};
+use gpui::{App, Pixels, Rems, SharedString, StyleRefinement, px, rems};
 
+use crate::ActiveTheme as _;
 use crate::highlighter::HighlightTheme;
 
 /// TextViewStyle used to customize the style for [`TextView`].
@@ -20,6 +21,11 @@ pub struct TextViewStyle {
     pub highlight_theme: Arc<HighlightTheme>,
     /// The style refinement for code blocks.
     pub code_block: StyleRefinement,
+    /// Font family for inline code spans (`` `code` ``).
+    ///
+    /// `None` uses the theme's `mono_font_family`, so inline code matches
+    /// code blocks.
+    pub inline_code_font_family: Option<SharedString>,
     pub is_dark: bool,
 }
 
@@ -28,6 +34,7 @@ impl PartialEq for TextViewStyle {
         self.paragraph_gap == other.paragraph_gap
             && self.heading_base_font_size == other.heading_base_font_size
             && self.highlight_theme == other.highlight_theme
+            && self.inline_code_font_family == other.inline_code_font_family
     }
 }
 
@@ -39,6 +46,7 @@ impl Default for TextViewStyle {
             heading_font_size: None,
             highlight_theme: HighlightTheme::default_light().clone(),
             code_block: StyleRefinement::default(),
+            inline_code_font_family: None,
             is_dark: false,
         }
     }
@@ -63,5 +71,19 @@ impl TextViewStyle {
     pub fn code_block(mut self, style: StyleRefinement) -> Self {
         self.code_block = style;
         self
+    }
+
+    /// Set the font family used for inline code spans, default is the
+    /// theme's `mono_font_family`.
+    pub fn inline_code_font_family(mut self, font_family: impl Into<SharedString>) -> Self {
+        self.inline_code_font_family = Some(font_family.into());
+        self
+    }
+
+    /// The font family to render inline code spans with.
+    pub(crate) fn inline_code_font(&self, cx: &App) -> SharedString {
+        self.inline_code_font_family
+            .clone()
+            .unwrap_or_else(|| cx.theme().mono_font_family.clone())
     }
 }
