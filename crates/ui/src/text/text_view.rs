@@ -216,7 +216,8 @@ enum InitState {
     },
 }
 
-pub(crate) struct TextViewState {
+/// Persistent state for a [`TextView`] — parsed content, selection, and scroll position.
+pub struct TextViewState {
     parent_entity: Option<EntityId>,
     tx: Option<smol::channel::Sender<Update>>,
     parsed_result: Option<Result<ParsedContent, SharedString>>,
@@ -249,6 +250,14 @@ impl TextViewState {
 }
 
 impl TextViewState {
+    /// The list state backing this view's scroll position.
+    ///
+    /// Exposed so callers can read or drive the scroll position — for
+    /// example to keep it in sync with another view.
+    pub fn list_state(&self) -> &ListState {
+        &self.list_state
+    }
+
     /// Save bounds and unselect if bounds changed.
     fn update_bounds(&mut self, bounds: Bounds<Pixels>) {
         if self.bounds.size != bounds.size {
@@ -463,6 +472,15 @@ impl TextView {
             scrollable: false,
             code_block_actions: None,
         }
+    }
+
+    /// The entity backing this view's persistent state — parsed content,
+    /// selection, and scroll position.
+    ///
+    /// Exposed so callers can hold onto it across renders, e.g. to read or
+    /// drive the scroll position from outside.
+    pub fn state(&self) -> &Entity<TextViewState> {
+        &self.state
     }
 
     /// Set the source text of the text view.

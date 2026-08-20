@@ -798,6 +798,24 @@ impl InputState {
         &self.text
     }
 
+    /// The scroll handle backing this editor's viewport.
+    ///
+    /// Exposed so callers can read or drive the editor's scroll position —
+    /// for example to keep it in sync with another view.
+    pub fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll_handle
+    }
+
+    /// The full scrollable size of the editor's content.
+    pub fn scroll_content_size(&self) -> gpui::Size<Pixels> {
+        self.scroll_size
+    }
+
+    /// The size of the editor's visible viewport.
+    pub fn scroll_viewport_size(&self) -> gpui::Size<Pixels> {
+        self.input_bounds.size
+    }
+
     /// Return the (0-based) [`Position`] of the cursor.
     pub fn cursor_position(&self) -> Position {
         let offset = self.cursor();
