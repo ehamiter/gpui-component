@@ -15,16 +15,37 @@ use crate::{
     },
 };
 
-/// Parse Markdown into a tree of nodes.
+/// Parse Markdown into a tree of nodes, along with the source byte-range
+/// span of each top-level (root) block, in the same order as the blocks
+/// themselves — so a block index from the rendered list can be mapped back
+/// to a position in the source text, and vice versa.
+///
+/// A block's span is `None` only when the root child has no source
+/// position of its own, which does not happen for `markdown::to_mdast`
+/// output.
 pub(crate) fn parse(
     raw: &str,
     style: &TextViewStyle,
     cx: &mut NodeContext,
     highlight_theme: &HighlightTheme,
-) -> Result<node::Node, SharedString> {
-    markdown::to_mdast(&raw, &ParseOptions::gfm())
-        .map(|n| ast_to_node(n, style, cx, highlight_theme))
-        .map_err(|e| e.to_string().into())
+) -> Result<(node::Node, Vec<Option<Span>>), SharedString> {
+    let root = markdown::to_mdast(&raw, &ParseOptions::gfm()).map_err(|e| e.to_string())?;
+
+    let block_spans = match &root {
+        mdast::Node::Root(val) => val
+            .children
+            .iter()
+            .map(|c| {
+                c.position().map(|pos| Span {
+                    start: pos.start.offset,
+                    end: pos.end.offset,
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    Ok((ast_to_node(root, style, cx, highlight_theme), block_spans))
 }
 
 fn parse_table_row(table: &mut Table, node: &mdast::TableRow, cx: &mut NodeContext) {

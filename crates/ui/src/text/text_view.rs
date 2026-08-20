@@ -103,6 +103,9 @@ pub struct TextView {
 pub(crate) struct ParsedContent {
     pub(crate) root_node: node::Node,
     pub(crate) node_cx: node::NodeContext,
+    /// The source byte-range span of each top-level block, in the same
+    /// order as the blocks themselves. See [`TextViewState::block_spans`].
+    pub(crate) block_spans: Vec<Option<node::Span>>,
 }
 
 /// The type of the text view.
@@ -256,6 +259,21 @@ impl TextViewState {
     /// example to keep it in sync with another view.
     pub fn list_state(&self) -> &ListState {
         &self.list_state
+    }
+
+    /// The source byte-range span of each top-level block, in the same
+    /// order as the items backing [`Self::list_state`] — so a block index
+    /// from `ListState::logical_scroll_top` (or `bounds_for_item`) can be
+    /// mapped back to a position in the source text, and vice versa.
+    ///
+    /// Empty before the content has parsed. An entry is `None` for a block
+    /// without a source position of its own — currently only possible for
+    /// an HTML view, since every Markdown root block carries one.
+    pub fn block_spans(&self) -> &[Option<node::Span>] {
+        match &self.parsed_result {
+            Some(Ok(content)) => &content.block_spans,
+            _ => &[],
+        }
     }
 
     /// Save bounds and unselect if bounds changed.
@@ -806,13 +824,18 @@ fn parse_content(
         ..NodeContext::default()
     };
 
-    let res = match type_ {
+    let (root_node, block_spans) = match type_ {
         TextViewType::Markdown => {
-            super::format::markdown::parse(text, &style, &mut node_cx, highlight_theme)
+            super::format::markdown::parse(text, &style, &mut node_cx, highlight_theme)?
         }
-        TextViewType::Html => super::format::html::parse(text, &mut node_cx),
+        TextViewType::Html => (super::format::html::parse(text, &mut node_cx)?, Vec::new()),
     };
-    res.map(move |root_node| ParsedContent { root_node, node_cx })
+
+    Ok(ParsedContent {
+        root_node,
+        node_cx,
+        block_spans,
+    })
 }
 
 fn selection_bounds(

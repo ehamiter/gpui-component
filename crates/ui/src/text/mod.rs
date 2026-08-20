@@ -6,6 +6,7 @@ mod text_view;
 mod utils;
 
 use gpui::App;
+pub use node::Span;
 pub use style::*;
 pub use text_view::*;
 

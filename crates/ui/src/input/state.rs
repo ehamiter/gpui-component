@@ -816,6 +816,48 @@ impl InputState {
         self.input_bounds.size
     }
 
+    /// The vertical offset, within the editor's full content (not the
+    /// scrolled viewport), of the start of the source line containing
+    /// `offset`.
+    ///
+    /// Accounts for soft-wrapped lines, the same way the editor's own
+    /// scroll-to-cursor behavior does. Returns `None` before the editor has
+    /// laid out at least once, since line heights aren't known yet.
+    pub fn y_offset_for_offset(&self, offset: usize) -> Option<Pixels> {
+        let line_height = self.last_layout.as_ref()?.line_height;
+        let row = self.text.offset_to_point(offset).row;
+        Some(
+            self.text_wrapper
+                .lines
+                .iter()
+                .take(row)
+                .fold(px(0.), |y, line| y + line.height(line_height)),
+        )
+    }
+
+    /// The byte offset of the start of the source line at vertical offset
+    /// `y` within the editor's full content (not the scrolled viewport) —
+    /// the inverse of [`Self::y_offset_for_offset`].
+    ///
+    /// Returns `0` before the editor has laid out at least once, since line
+    /// heights aren't known yet.
+    pub fn offset_for_y_offset(&self, y: Pixels) -> usize {
+        let Some(line_height) = self.last_layout.as_ref().map(|layout| layout.line_height) else {
+            return 0;
+        };
+
+        let mut top = px(0.);
+        for (row, line) in self.text_wrapper.lines.iter().enumerate() {
+            let height = line.height(line_height);
+            if top + height > y {
+                return self.text.line_start_offset(row);
+            }
+            top += height;
+        }
+
+        self.text.len()
+    }
+
     /// Return the (0-based) [`Position`] of the cursor.
     pub fn cursor_position(&self) -> Position {
         let offset = self.cursor();
