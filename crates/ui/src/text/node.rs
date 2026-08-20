@@ -1,14 +1,15 @@
 use std::{
     collections::HashMap,
     ops::Range,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use gpui::{
     AnyElement, App, DefiniteLength, Div, Element, ElementId, FontStyle, FontWeight, Half,
-    HighlightStyle, InteractiveElement as _, IntoElement, Length, ListState, ObjectFit,
-    ParentElement, SharedString, SharedUri, StatefulInteractiveElement, Styled, StyledImage as _,
-    Window, div, img, prelude::FluentBuilder as _, px, relative, rems,
+    HighlightStyle, ImageSource, InteractiveElement as _, IntoElement, Length, ListState,
+    ObjectFit, ParentElement, SharedString, SharedUri, StatefulInteractiveElement, Styled,
+    StyledImage as _, Window, div, img, prelude::FluentBuilder as _, px, relative, rems,
 };
 use markdown::mdast;
 use ropey::Rope;
@@ -567,6 +568,40 @@ impl Node {
     }
 }
 
+/// Does `url` name a remote or embedded resource rather than a path on disk?
+///
+/// A scheme (`https://...`) or a `data:` URI should keep going through
+/// gpui's own `Resource::Uri`/HTTP handling; anything else is how Markdown
+/// and HTML authors write a path to a file next to the document.
+fn is_remote_url(url: &str) -> bool {
+    url.contains("://") || url.starts_with("data:")
+}
+
+/// Turn an image's `src`/`url` into the [`ImageSource`] gpui should load it
+/// from.
+///
+/// gpui's `SharedUri -> ImageSource` conversion always produces
+/// `Resource::Uri`, which is fetched over HTTP — even for a bare relative
+/// path like `image.png`, which has no scheme for the HTTP client to use
+/// and so never loads. A local path — relative to `base_dir`, or absolute
+/// — is resolved to a `PathBuf` here instead, so it takes gpui's filesystem
+/// read path. Without a `base_dir`, a relative path falls back to the
+/// previous (HTTP-fetch) behavior, since there is no document location to
+/// resolve it against.
+fn resolve_image_source(url: &SharedUri, base_dir: Option<&Path>) -> ImageSource {
+    let text = url.to_string();
+    if is_remote_url(&text) {
+        return url.clone().into();
+    }
+
+    let path = PathBuf::from(&text);
+    match (path.is_absolute(), base_dir) {
+        (true, _) => path.into(),
+        (false, Some(base_dir)) => base_dir.join(path).into(),
+        (false, None) => url.clone().into(),
+    }
+}
+
 impl Paragraph {
     fn render(
         &self,
@@ -611,7 +646,10 @@ impl Paragraph {
                     );
                 }
                 child_nodes.push(
-                    img(image.url.clone())
+                    img(resolve_image_source(
+                        &image.url,
+                        node_cx.style.base_dir.as_deref(),
+                    ))
                         .id(ix)
                         .object_fit(ObjectFit::Contain)
                         .max_w(relative(1.))
@@ -1257,5 +1295,59 @@ impl Node {
                 div().into_any_element()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod resolve_image_source_tests {
+    use super::resolve_image_source;
+    use gpui::{ImageSource, Resource, SharedUri};
+    use std::path::{Path, PathBuf};
+
+    fn resource(url: &str, base_dir: Option<&Path>) -> Resource {
+        match resolve_image_source(&SharedUri::from(url.to_string()), base_dir) {
+            ImageSource::Resource(resource) => resource,
+            _ => panic!("expected a resource for {url:?}"),
+        }
+    }
+
+    #[test]
+    fn remote_urls_are_unaffected() {
+        for url in [
+            "https://example.com/logo.png",
+            "http://example.com/logo.png",
+            "data:image/png;base64,iVBORw0KGgo=",
+        ] {
+            assert!(matches!(resource(url, Some(Path::new("/docs"))), Resource::Uri(_)));
+        }
+    }
+
+    #[test]
+    fn relative_path_resolves_against_base_dir() {
+        assert_eq!(
+            resource("image.png", Some(Path::new("/docs/notes"))),
+            Resource::Path(PathBuf::from("/docs/notes/image.png").into()),
+        );
+        assert_eq!(
+            resource("./images/a.png", Some(Path::new("/docs"))),
+            Resource::Path(PathBuf::from("/docs/./images/a.png").into()),
+        );
+    }
+
+    #[test]
+    fn absolute_path_is_used_as_is_regardless_of_base_dir() {
+        assert_eq!(
+            resource("/absolute/path/logo.svg", Some(Path::new("/docs"))),
+            Resource::Path(PathBuf::from("/absolute/path/logo.svg").into()),
+        );
+        assert_eq!(
+            resource("/absolute/path/logo.svg", None),
+            Resource::Path(PathBuf::from("/absolute/path/logo.svg").into()),
+        );
+    }
+
+    #[test]
+    fn relative_path_without_base_dir_falls_back_to_a_uri() {
+        assert!(matches!(resource("image.png", None), Resource::Uri(_)));
     }
 }

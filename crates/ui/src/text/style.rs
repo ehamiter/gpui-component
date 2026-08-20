@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{App, Pixels, Rems, SharedString, StyleRefinement, px, rems};
@@ -26,6 +27,14 @@ pub struct TextViewStyle {
     /// `None` uses the theme's `mono_font_family`, so inline code matches
     /// code blocks.
     pub inline_code_font_family: Option<SharedString>,
+    /// Directory that relative image sources (Markdown `![]()` or HTML
+    /// `<img src>`) are resolved against.
+    ///
+    /// `None` leaves a bare `image.png`-style source to fall through to
+    /// gpui's own resolution, which treats it as an embedded-asset lookup
+    /// rather than a file on disk. Set this to the directory of the
+    /// document being rendered so relative image paths load from there.
+    pub base_dir: Option<PathBuf>,
     pub is_dark: bool,
 }
 
@@ -35,6 +44,7 @@ impl PartialEq for TextViewStyle {
             && self.heading_base_font_size == other.heading_base_font_size
             && self.highlight_theme == other.highlight_theme
             && self.inline_code_font_family == other.inline_code_font_family
+            && self.base_dir == other.base_dir
     }
 }
 
@@ -47,6 +57,7 @@ impl Default for TextViewStyle {
             highlight_theme: HighlightTheme::default_light().clone(),
             code_block: StyleRefinement::default(),
             inline_code_font_family: None,
+            base_dir: None,
             is_dark: false,
         }
     }
@@ -85,5 +96,11 @@ impl TextViewStyle {
         self.inline_code_font_family
             .clone()
             .unwrap_or_else(|| cx.theme().mono_font_family.clone())
+    }
+
+    /// Set the directory relative image sources are resolved against.
+    pub fn base_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.base_dir = Some(dir.into());
+        self
     }
 }
